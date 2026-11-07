@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+.venv/
+.tmp/
+.tools/
+.npm-cache/
+.pnpm-store/
+**/__pycache__/
+.pytest_cache/
+frontend/node_modules/
+# A verified frontend build is intentionally included for immediate local use.
+frontend/*.tsbuildinfo
+data/*.sqlite*
+data/dense*.json
+*.log

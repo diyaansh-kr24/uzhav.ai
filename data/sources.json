@@ -1,0 +1,8 @@
+[
+ {"id":"pmfby-2023","title":"PMFBY Operational Guidelines 2023","url":"https://pmfby.amnex.co.in/pmfby/pdf/operational_guidelines_pmfby.pdf","districts":["all"],"kind":"framework","published":"2023","note":"General framework, effective from Kharif 2023. Does not establish a village's current notification."},
+ {"id":"pib-grievance","title":"PMFBY application validation and grievance channels","url":"https://www.pib.gov.in/PressReleasePage.aspx?PRID=2197713","districts":["all"],"kind":"framework","published":"2025-12-02","note":"Central government explanation. General seasonal dates must not be substituted for district notifications."},
+ {"id":"thanjavur-agri","title":"Thanjavur Agriculture Department","url":"https://thanjavur.nic.in/agriculture-2/","districts":["Thanjavur"],"kind":"directory","published":null,"note":"District service directory. Schemes and contacts require reconfirmation."},
+ {"id":"tiruvarur-agri","title":"Tiruvarur Agriculture and Farmers Welfare Department","url":"https://tiruvarur.nic.in/departments/agriculture/","districts":["Tiruvarur"],"kind":"directory","published":null,"note":"District service directory, not a season-specific insurance notification."},
+ {"id":"nagapattinam-agri","title":"Nagapattinam Agriculture Department","url":"https://nagapattinam.nic.in/agriculture/","districts":["Nagapattinam"],"kind":"directory","published":null,"note":"District service directory, not a current crop notification."},
+ {"id":"tn-tender-2024","title":"Tamil Nadu PMFBY tender for 2024–25 and 2025–26","url":"https://www.tnagrisnet.tn.gov.in/CIS/docs/1.pdf","districts":["all"],"kind":"archive","published":"2024","note":"Historical material only. Excluded from live guidance retrieval."}
+]

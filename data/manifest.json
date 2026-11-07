@@ -1,0 +1,92 @@
+[
+  {
+    "id": "pmfby-2023",
+    "title": "PMFBY Operational Guidelines 2023",
+    "url": "https://pmfby.amnex.co.in/pmfby/pdf/operational_guidelines_pmfby.pdf",
+    "districts": [
+      "all"
+    ],
+    "kind": "framework",
+    "published": "2023",
+    "note": "General framework, effective from Kharif 2023. Does not establish a village's current notification.",
+    "retrieved_at": "2026-11-07T07:30:36.988670+00:00",
+    "sha256": "5252ce3a62b66a448e083d87405c7ab8f8d50a360a8b5df6f97dfbfe9008c875",
+    "status": "indexed",
+    "chunk_count": 705
+  },
+  {
+    "id": "pib-grievance",
+    "title": "PMFBY application validation and grievance channels",
+    "url": "https://www.pib.gov.in/PressReleasePage.aspx?PRID=2197713",
+    "districts": [
+      "all"
+    ],
+    "kind": "framework",
+    "published": "2025-12-02",
+    "note": "Central government explanation. General seasonal dates must not be substituted for district notifications.",
+    "retrieved_at": "2026-11-07T07:30:51.547069+00:00",
+    "sha256": "3ee0daa102f76fef1fa0817f5cdfe3cc00e54114d01efffed8f0c6cf5cce6804",
+    "status": "indexed",
+    "chunk_count": 8
+  },
+  {
+    "id": "thanjavur-agri",
+    "title": "Thanjavur Agriculture Department",
+    "url": "https://thanjavur.nic.in/agriculture-2/",
+    "districts": [
+      "Thanjavur"
+    ],
+    "kind": "directory",
+    "published": null,
+    "note": "District service directory. Schemes and contacts require reconfirmation.",
+    "retrieved_at": "2026-11-07T07:30:52.453053+00:00",
+    "sha256": "ef6cd77636fc420009e4e83cd4f18b098d179def9f54d32a0fbc41522f934048",
+    "status": "indexed",
+    "chunk_count": 5
+  },
+  {
+    "id": "tiruvarur-agri",
+    "title": "Tiruvarur Agriculture and Farmers Welfare Department",
+    "url": "https://tiruvarur.nic.in/departments/agriculture/",
+    "districts": [
+      "Tiruvarur"
+    ],
+    "kind": "directory",
+    "published": null,
+    "note": "District service directory, not a season-specific insurance notification.",
+    "retrieved_at": "2026-11-07T07:30:52.970048+00:00",
+    "sha256": "361f9703a57215b0676dd6ccbbc982db8d1b33298c3d47dac700a196fa49248e",
+    "status": "indexed",
+    "chunk_count": 9
+  },
+  {
+    "id": "nagapattinam-agri",
+    "title": "Nagapattinam Agriculture Department",
+    "url": "https://nagapattinam.nic.in/agriculture/",
+    "districts": [
+      "Nagapattinam"
+    ],
+    "kind": "directory",
+    "published": null,
+    "note": "District service directory, not a current crop notification.",
+    "retrieved_at": "2026-11-07T07:30:53.498436+00:00",
+    "sha256": "041a6fe19df23dca9299f33bca92f8decfd949da68671abedbd411f2381ddfaa",
+    "status": "indexed",
+    "chunk_count": 1
+  },
+  {
+    "id": "tn-tender-2024",
+    "title": "Tamil Nadu PMFBY tender for 2024–25 and 2025–26",
+    "url": "https://www.tnagrisnet.tn.gov.in/CIS/docs/1.pdf",
+    "districts": [
+      "all"
+    ],
+    "kind": "archive",
+    "published": "2024",
+    "note": "Historical material only. Excluded from live guidance retrieval.",
+    "retrieved_at": "2026-11-07T07:30:54.050648+00:00",
+    "sha256": "3fa9d698000ef32fc61349e6228685d6b9e6cbd95cb013c659c84c684a715c59",
+    "status": "indexed",
+    "chunk_count": 110
+  }
+]
