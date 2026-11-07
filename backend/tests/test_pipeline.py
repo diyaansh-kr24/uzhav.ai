@@ -472,3 +472,13 @@ def test_reply_translation_is_cached(client, monkeypatch):
     assert client.post(url, headers=h, json={"language": "ta"}).status_code == 200
     assert calls == ["ta-IN"]  # second request served from cache
     assert client.post(url, headers=h, json={"language": "en"}).json()["answer"] == "Report it within 72 hours."
+
+
+def test_same_origin_allowed_when_deployed(client):
+    # e.g. the page served from https://uzhav-ai.onrender.com posting to itself
+    r = client.post("/api/cases", json=PROFILE,
+                    headers={"Origin": "https://uzhav-ai.onrender.com", "Host": "uzhav-ai.onrender.com"})
+    assert r.status_code == 200
+    r = client.post("/api/cases", json=PROFILE,
+                    headers={"Origin": "https://evil.example", "Host": "uzhav-ai.onrender.com"})
+    assert r.status_code == 403

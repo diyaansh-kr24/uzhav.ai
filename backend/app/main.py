@@ -40,12 +40,17 @@ async def boundary(request: Request, call_next):
     # Prevent casual cross-site use of this local prototype. Bind to localhost by default.
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         origin = request.headers.get("origin", "")
-        if origin and origin not in (
+        # Same-origin requests (the page served by this app, e.g. on Render) are always
+        # allowed; extra origins can be listed in ALLOWED_ORIGINS (comma-separated).
+        same_origin = origin.split("://", 1)[-1] == request.headers.get("host", "")
+        allowed = {
             "http://127.0.0.1:5173",
             "http://localhost:5173",
             "http://127.0.0.1:8000",
             "http://localhost:8000",
-        ):
+            *(o.strip().rstrip("/") for o in setting("ALLOWED_ORIGINS").split(",") if o.strip()),
+        }
+        if origin and not same_origin and origin not in allowed:
             from fastapi.responses import JSONResponse
 
             return JSONResponse({"detail": "Origin not allowed"}, status_code=403)

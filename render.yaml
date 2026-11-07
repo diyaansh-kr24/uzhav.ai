@@ -1,0 +1,37 @@
+# Render Blueprint: one free web service runs the API and serves the built frontend.
+# Case data is stored in SQLite on the instance and is wiped on restart/redeploy (by design).
+services:
+  - type: web
+    name: uzhav-ai
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.lock.txt
+    startCommand: cd backend && python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13.1"
+      - key: GEMINI_MODEL
+        value: gemini-3.5-flash
+      - key: GEMINI_REASONING_EFFORT
+        value: low
+      - key: AICREDITS_BASE_URL
+        value: https://api.aicredits.in/v1
+      - key: AICREDITS_MODEL
+        value: google/gemini-3.1-flash-lite
+      - key: SARVAM_TRANSLATE_MODEL
+        value: sarvam-translate:v1
+      - key: SARVAM_STT_MODEL
+        value: saaras:v3
+      - key: VERIFY_ANSWERS
+        value: "false"
+      # Secrets: Render asks for these when you create the service. Never commit them.
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: AICREDITS_API_KEY
+        sync: false
+      - key: SARVAM_API_KEY
+        sync: false
+      - key: REVIEWER_TOKEN
+        generateValue: true
