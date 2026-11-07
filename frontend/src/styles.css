@@ -2096,3 +2096,17 @@ nav button:not(:disabled):hover {
   border-color: #6fc699 !important;
   box-shadow: 0 0 0 3px rgba(111, 198, 153, 0.18);
 }
+
+/* Dark mode: home-page feature items stay plain (no box), matching light mode */
+:root[data-theme="dark"] .feature-grid > .feature.feature {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+:root[data-theme="dark"] .feature-grid > .feature.feature > svg {
+  background: #22352c !important;
+  color: #9fe0bb !important;
+}
+:root[data-theme="dark"] .feature p {
+  color: var(--muted);
+}
