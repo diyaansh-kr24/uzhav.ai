@@ -228,7 +228,6 @@ export default function App() {
             >
               <Icon size={20} />
               {pick(lang, en, ta)}
-              {id === "assistant" && <span className="nav-dot" />}
             </button>
           ))}
         </nav>
@@ -260,7 +259,6 @@ export default function App() {
               ? pick(lang, "Light mode", "வெளிர் பயன்முறை")
               : pick(lang, "Dark mode", "இருண்ட பயன்முறை")}
           </button>
-          <div className="sidebar-credit">MS2002 · GROUP 20</div>
         </div>
       </aside>
       <main>
@@ -272,7 +270,7 @@ export default function App() {
           >
             <Menu />
           </button>
-          <div />
+          <div className="topbar-credit">MS2002 · GROUP 20</div>
           <div className="top-actions">
             {session && (
               <button className="new-case-button" onClick={newCase}>
