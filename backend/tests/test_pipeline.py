@@ -139,6 +139,7 @@ def test_live_structured_flow_with_stubbed_provider(monkeypatch):
 
     monkeypatch.setattr(pipeline, "configured", lambda _: True)
     monkeypatch.setattr(pipeline, "completion", complete)
+    monkeypatch.setenv("VERIFY_ANSWERS", "true")
     r = run()
     assert (
         r["status"] == "answered"
@@ -153,8 +154,23 @@ def test_verifier_can_withhold_answer(monkeypatch):
 
     monkeypatch.setattr(pipeline, "configured", lambda _: True)
     monkeypatch.setattr(pipeline, "completion", complete)
+    monkeypatch.setenv("VERIFY_ANSWERS", "true")
     r = run()
     assert r["status"] == "needs_review" and r["claims"] == []
+
+
+def test_verifier_off_by_default_makes_one_call(monkeypatch):
+    calls = []
+
+    async def complete(system, user):
+        calls.append(system)
+        return valid()
+
+    monkeypatch.setattr(pipeline, "configured", lambda _: True)
+    monkeypatch.setattr(pipeline, "completion", complete)
+    monkeypatch.setenv("VERIFY_ANSWERS", "false")
+    r = run()
+    assert r["status"] == "answered" and len(calls) == 1
 
 
 def test_provider_failure_explicit(monkeypatch):

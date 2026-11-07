@@ -1,4 +1,4 @@
-import re
+import re, unicodedata
 
 TAMIL = re.compile(r"[\u0b80-\u0bff]")
 
@@ -42,7 +42,11 @@ def decision_claim(text):
 
 
 def normalize(text):
-    return re.sub(r"\s+", " ", text).strip().lower()
+    # PDF text has ligatures (ﬁ), soft hyphens, line-break hyphenation and curly
+    # quotes. Compare words only, so faithful quotes are not rejected on formatting.
+    text = unicodedata.normalize("NFKC", text).replace("­", "")
+    text = re.sub(r"(\w)-\s*\n\s*(\w)", r"\1\2", text)
+    return re.sub(r"[\W_]+", " ", text).strip().lower()
 
 
 def validate_claims(answer, evidence):

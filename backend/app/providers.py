@@ -1,20 +1,26 @@
-import asyncio, json, re
+import asyncio, contextvars, json, logging, re
 import httpx
 from .config import setting, configured
+
+log = logging.getLogger("uvicorn.error")
+# Model that produced the most recent completion in this request (for the UI label).
+last_model = contextvars.ContextVar("last_model", default="")
 
 
 class ProviderError(Exception):
     pass
 
 
-async def request_json(url, headers, *, payload=None, files=None, data=None):
-    for attempt in range(3):
+async def request_json(
+    url, headers, *, payload=None, files=None, data=None, attempts=3, timeout=65
+):
+    for attempt in range(attempts):
         try:
-            async with httpx.AsyncClient(timeout=65) as client:
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 r = await client.post(
                     url, headers=headers, json=payload, files=files, data=data
                 )
-            if r.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+            if r.status_code in (429, 500, 502, 503, 504) and attempt < attempts - 1:
                 await asyncio.sleep(0.6 * (attempt + 1))
                 continue
             r.raise_for_status()
@@ -30,24 +36,7 @@ async def request_json(url, headers, *, payload=None, files=None, data=None):
     raise ProviderError("Provider temporarily unavailable.")
 
 
-async def completion(system, user):
-    if not configured("AICREDITS_API_KEY"):
-        raise ProviderError("DeepSeek is not configured.")
-    result = await request_json(
-        setting("AICREDITS_BASE_URL", "https://api.aicredits.in/v1").rstrip("/")
-        + "/chat/completions",
-        {"Authorization": "Bearer " + setting("AICREDITS_API_KEY")},
-        payload={
-            "model": setting("AICREDITS_MODEL", "deepseek/deepseek-v3.2"),
-            "temperature": 0.1,
-            "max_tokens": 2400,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "response_format": {"type": "json_object"},
-        },
-    )
+def parse_structured(result):
     try:
         text = result["choices"][0]["message"]["content"]
         text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip())
@@ -57,6 +46,67 @@ async def completion(system, user):
         return parsed
     except (KeyError, TypeError, ValueError, IndexError) as exc:
         raise ProviderError("Invalid structured model response.") from exc
+
+
+async def chat(base_url, key, model, system, user, extra=None, **kw):
+    payload = {
+        "model": model,
+        "temperature": 0.1,
+        "max_tokens": 4000,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "response_format": {"type": "json_object"},
+        **(extra or {}),
+    }
+    result = await request_json(
+        base_url.rstrip("/") + "/chat/completions",
+        {"Authorization": "Bearer " + key},
+        payload=payload,
+        **kw,
+    )
+    return parse_structured(result)
+
+
+async def completion(system, user):
+    """Direct Gemini first (fast), AI Credits as fallback. Either alone also works."""
+    if configured("GEMINI_API_KEY"):
+        model = setting("GEMINI_MODEL", "gemini-3.5-flash")
+        effort = setting("GEMINI_REASONING_EFFORT", "low")
+        try:
+            out = await chat(
+                setting(
+                    "GEMINI_BASE_URL",
+                    "https://generativelanguage.googleapis.com/v1beta/openai",
+                ),
+                setting("GEMINI_API_KEY"),
+                model,
+                system,
+                user,
+                {"reasoning_effort": effort} if effort else None,
+                # Fail fast so the fallback still answers in reasonable time.
+                attempts=1,
+                timeout=25,
+            )
+            last_model.set(model)
+            return out
+        except ProviderError as exc:
+            if not configured("AICREDITS_API_KEY"):
+                raise
+            log.warning("Gemini failed (%r); falling back to AI Credits", exc.__cause__)
+    if not configured("AICREDITS_API_KEY"):
+        raise ProviderError("No language model is configured.")
+    model = setting("AICREDITS_MODEL", "deepseek/deepseek-v3.2")
+    out = await chat(
+        setting("AICREDITS_BASE_URL", "https://api.aicredits.in/v1"),
+        setting("AICREDITS_API_KEY"),
+        model,
+        system,
+        user,
+    )
+    last_model.set(model + " (AI Credits)")
+    return out
 
 
 async def translate(text, source, target):

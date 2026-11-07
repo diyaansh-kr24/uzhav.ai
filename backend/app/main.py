@@ -94,9 +94,9 @@ def case_snapshot(cid):
 @app.get("/api/health")
 def health():
     return {
-        "llm_configured": configured("AICREDITS_API_KEY"),
+        "llm_configured": configured("GEMINI_API_KEY") or configured("AICREDITS_API_KEY"),
         "sarvam_configured": configured("SARVAM_API_KEY"),
-        "model": setting("AICREDITS_MODEL", "deepseek/deepseek-v3.2"),
+        "model": setting("GEMINI_MODEL", "gemini-3.5-flash") if configured("GEMINI_API_KEY") else setting("AICREDITS_MODEL", "deepseek/deepseek-v3.2"),
         "chunks": len(retriever.rows),
         "retrieval": "BM25 + character TF-IDF"
         + (" + dense embeddings" if retriever.dense is not None else ""),
