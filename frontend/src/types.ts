@@ -5,6 +5,10 @@ export type Profile = {
   season: string;
   stage: string;
   documents: string[];
+  situation?: "enrol" | "damaged" | "waiting" | "problem" | null;
+  loanee?: "yes" | "no" | "unsure" | null;
+  damage_cause?: "flood" | "cyclone" | "drought" | "pest" | "other" | null;
+  damage_when?: "under_3_days" | "3_to_14_days" | "over_14_days" | "harvested" | null;
 };
 export type Evidence = {
   id: string;
@@ -29,6 +33,9 @@ export type Result = {
   evidence: Evidence[];
   trace: string[];
   missing_information: string[];
+  suggested_reply?: string;
+  checklist?: string[];
+  show_plan?: boolean;
   language: Lang;
   engine: string;
   elapsed_ms: number;
@@ -37,6 +44,7 @@ export type Result = {
 export type Case = {
   id: string;
   profile: Profile;
+  plan: { question: string; result: Result; created: string } | null;
   messages: { id: string; question: string; result: Result; created: string }[];
   reviews: {
     id: string;

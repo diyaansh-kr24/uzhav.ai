@@ -5,6 +5,46 @@ import pytest
 from app import providers
 
 
+@pytest.fixture(autouse=True)
+def no_real_gemini(monkeypatch):
+    # The developer's real .env may hold a Gemini key; contract tests must not use it.
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+
+def test_gemini_first_then_aicredits_fallback(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "g-key")
+    monkeypatch.setenv("AICREDITS_API_KEY", "test-key")
+    urls = []
+
+    async def request(url, headers, **kw):
+        urls.append(url)
+        if "googleapis" in url:
+            assert headers["Authorization"] == "Bearer g-key"
+            assert kw["payload"]["reasoning_effort"] == "low"
+            assert kw["attempts"] == 1
+            raise providers.ProviderError("down")
+        return {"choices": [{"message": {"content": '{"ok": 1}'}}]}
+
+    monkeypatch.setattr(providers, "request_json", request)
+    assert asyncio.run(providers.completion("s", "u")) == {"ok": 1}
+    assert "googleapis" in urls[0] and "aicredits" in urls[1]
+
+
+def test_gemini_success_skips_fallback(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "g-key")
+    calls = []
+
+    async def request(url, headers, **kw):
+        calls.append(url)
+        return {"choices": [{"message": {"content": '{"ok": 2}'}}]}
+
+    monkeypatch.setattr(providers, "request_json", request)
+    async def go():
+        return await providers.completion("s", "u"), providers.last_model.get()
+
+    assert asyncio.run(go()) == ({"ok": 2}, "gemini-3.5-flash") and len(calls) == 1
+
+
 def test_deepseek_request_contract(monkeypatch):
     monkeypatch.setenv("AICREDITS_API_KEY", "test-key")
     monkeypatch.setenv("AICREDITS_BASE_URL", "https://api.aicredits.in/v1")

@@ -23,7 +23,8 @@ def init():
             """CREATE TABLE IF NOT EXISTS cases(id TEXT PRIMARY KEY, token_hash TEXT, profile TEXT, created TEXT);
         CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY, case_id TEXT, question TEXT, result TEXT, created TEXT);
         CREATE TABLE IF NOT EXISTS reviews(id TEXT PRIMARY KEY, case_id TEXT, message_id TEXT UNIQUE, reason TEXT, state TEXT, response TEXT, citations TEXT, created TEXT, resolved TEXT);
-        CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, case_id TEXT, kind TEXT, created TEXT);"""
+        CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY, case_id TEXT, kind TEXT, created TEXT);
+        CREATE TABLE IF NOT EXISTS plans(case_id TEXT PRIMARY KEY, question TEXT, result TEXT, created TEXT);"""
         )
 
 
@@ -81,9 +82,16 @@ def snapshot(cid):
                 (cid,),
             )
         ]
+        p = db.execute("SELECT * FROM plans WHERE case_id=?", (cid,)).fetchone()
+    plan = (
+        {"question": p["question"], "result": json.loads(p["result"]), "created": p["created"]}
+        if p
+        else None
+    )
     return {
         "id": cid,
         "profile": json.loads(row["profile"]),
+        "plan": plan,
         "messages": messages,
         "reviews": reviews,
         "events": events,
@@ -113,3 +121,26 @@ def save_message(cid, question, result):
                 ),
             )
     return mid
+
+
+def save_plan(cid, question, result):
+    """One plan per case, kept apart from chat history. Regenerating replaces it."""
+    with connect() as db:
+        db.execute(
+            "INSERT OR REPLACE INTO plans VALUES(?,?,?,?)",
+            (cid, question, json.dumps(result, ensure_ascii=False), now()),
+        )
+
+
+def get_message(cid, mid):
+    with connect() as db:
+        r = db.execute("SELECT * FROM messages WHERE id=? AND case_id=?", (mid, cid)).fetchone()
+    return {"id": r["id"], "question": r["question"], "result": json.loads(r["result"])} if r else None
+
+
+def update_message_result(mid, result):
+    with connect() as db:
+        db.execute(
+            "UPDATE messages SET result=? WHERE id=?",
+            (json.dumps(result, ensure_ascii=False), mid),
+        )

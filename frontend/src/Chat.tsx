@@ -1,19 +1,33 @@
 import { useState, useRef, useEffect } from "react";
-import {
-  Send,
-  Mic,
-  Square,
-  ShieldCheck,
-  ArrowUpRight,
-  LoaderCircle,
-  UserRound,
-  Leaf,
-  CheckCircle2,
-} from "lucide-react";
+import { Send, Mic, Square, LoaderCircle, Leaf } from "lucide-react";
 import type { Case, Session, Lang, Health, Result } from "./types";
-import { pick, stageNames } from "./types";
+import { pick, districtTamil } from "./types";
 import { api } from "./api";
-import Evidence, { Citations } from "./Evidence";
+import AnswerBody from "./Answer";
+
+const SITUATION: Record<string, [string, string]> = {
+  enrol: ["and that you want to get your crop insured", "உங்கள் பயிரைக் காப்பீடு செய்ய விரும்புகிறீர்கள்"],
+  damaged: ["and that your crop has been damaged", "உங்கள் பயிர் பாதிக்கப்பட்டுள்ளது"],
+  waiting: ["and that you are waiting on a reported loss", "பதிவு செய்த இழப்புக்காகக் காத்திருக்கிறீர்கள்"],
+  problem: ["and that you have a problem with your claim", "உங்கள் கோரிக்கையில் சிக்கல் உள்ளது"],
+};
+
+const HINT: Record<string, [string, string]> = {
+  enrol: ["e.g. Which documents do I need to enrol?", "எ.கா. பதிவு செய்ய என்ன ஆவணங்கள் தேவை?"],
+  damaged: ["e.g. Where do I report the crop damage?", "எ.கா. பயிர் பாதிப்பை எங்கே பதிவு செய்வது?"],
+  waiting: ["e.g. How can I check on my claim?", "எ.கா. என் கோரிக்கையின் நிலையை எப்படி அறிவது?"],
+  problem: ["e.g. My claim was rejected. What can I do?", "எ.கா. என் கோரிக்கை நிராகரிக்கப்பட்டது. என்ன செய்யலாம்?"],
+  default: ["e.g. How do I report crop loss?", "எ.கா. பயிர் இழப்பை எப்படிப் பதிவு செய்வது?"],
+};
+
+function hintFor(caseData: Case, lang: Lang): string {
+  const base = HINT[caseData.profile.situation || "default"] || HINT.default;
+  const last: Result | undefined = caseData.messages.at(-1)?.result;
+  if (lang === "en" && last?.suggested_reply) return "e.g. " + last.suggested_reply;
+  if (last && last.status !== "answered")
+    return pick(lang, "Try asking it differently, ", "வேறு விதமாகக் கேட்டுப் பாருங்கள், ") + pick(lang, base[0], base[1]);
+  return pick(lang, base[0], base[1]);
+}
 
 export default function Chat({
   caseData,
@@ -21,21 +35,55 @@ export default function Chat({
   lang,
   health,
   refresh,
+  onShowPlan,
 }: {
   caseData: Case;
   session: Session;
   lang: Lang;
   health: Health | null;
   refresh: () => Promise<void>;
+  onShowPlan?: () => void;
 }) {
   const [question, setQuestion] = useState(""),
+    [pending, setPending] = useState(""),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(""),
-    [consent, setConsent] = useState(false),
     [recording, setRecording] = useState(false);
   const recorder = useRef<MediaRecorder | null>(null);
   const stream = useRef<MediaStream | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bottom = useRef<HTMLDivElement | null>(null);
+  // Replies shown in the other language: key `${messageId}:${lang}` -> text.
+  const [translated, setTranslated] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let cancelled = false;
+    const todo = caseData.messages.filter(
+      (m) => m.result.language !== lang && !translated[`${m.id}:${lang}`],
+    );
+    (async () => {
+      for (const m of todo) {
+        try {
+          const out = await api<{ answer: string }>(
+            `/cases/${session.id}/messages/${m.id}/translate`,
+            { method: "POST", body: JSON.stringify({ language: lang }) },
+            session,
+          );
+          if (cancelled) return;
+          setTranslated((t) => ({ ...t, [`${m.id}:${lang}`]: out.answer }));
+        } catch {
+          /* leave this reply in its original language */
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lang, caseData.messages.length, session.id]);
+  const shown = (m: Case["messages"][number]): Result => {
+    const t = translated[`${m.id}:${lang}`];
+    return t && m.result.language !== lang ? { ...m.result, answer: t } : m.result;
+  };
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current);
@@ -43,39 +91,33 @@ export default function Chat({
     },
     [],
   );
-  const examples =
-    lang === "en"
-      ? [
-          "How can I raise a crop-insurance grievance?",
-          "What is the difference between area-yield and localised losses?",
-          "What is the premium for my village this season?",
-        ]
-      : [
-          "பயிர்க் காப்பீட்டுக் குறையை எப்படி பதிவு செய்வது?",
-          "பகுதி மகசூல் இழப்புக்கும் உள்ளூர் பாதிப்புக்கும் என்ன வேறுபாடு?",
-          "இந்தப் பருவத்தில் என் கிராமத்திற்கான பிரீமியம் என்ன?",
-        ];
+  useEffect(() => {
+    bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [caseData.messages.length, busy]);
+
   async function send() {
-    if (busy || !question.trim()) return;
+    const q = question.trim();
+    if (busy || q.length < 3) return;
     setBusy(true);
     setError("");
+    setPending(q);
+    setQuestion("");
     try {
       await api<Result>(
         `/cases/${session.id}/chat`,
-        {
-          method: "POST",
-          body: JSON.stringify({ question, language: lang, consent }),
-        },
+        { method: "POST", body: JSON.stringify({ question: q, language: lang }) },
         session,
       );
-      setQuestion("");
       await refresh();
     } catch (e) {
+      setQuestion(q);
       setError((e as Error).message);
     } finally {
+      setPending("");
       setBusy(false);
     }
   }
+
   async function voice() {
     if (recording) {
       recorder.current?.stop();
@@ -83,27 +125,11 @@ export default function Chat({
     }
     setError("");
     try {
-      if (!consent)
-        throw new Error(
-          pick(
-            lang,
-            "Enable provider consent before recording.",
-            "பதிவு செய்வதற்கு முன் சேவை ஒப்புதலைத் தேர்ந்தெடுக்கவும்.",
-          ),
-        );
       if (!health?.sarvam_configured)
-        throw new Error(
-          pick(
-            lang,
-            "Configure Sarvam in the server .env first.",
-            "முதலில் சேவையகத்தில் Sarvam-ஐ அமைக்கவும்.",
-          ),
-        );
+        throw new Error(pick(lang, "Voice input is not set up on the server.", "குரல் உள்ளீடு அமைக்கப்படவில்லை."));
       const input = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.current = input;
-      const mime = MediaRecorder.isTypeSupported("audio/webm")
-        ? "audio/webm"
-        : "audio/mp4";
+      const mime = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "audio/mp4";
       const r = new MediaRecorder(input, { mimeType: mime });
       recorder.current = r;
       const parts: BlobPart[] = [];
@@ -116,7 +142,6 @@ export default function Chat({
         try {
           const form = new FormData();
           form.append("file", new Blob(parts, { type: mime }), "question.webm");
-          form.append("consent", "true");
           const out = await api<{ text: string }>(
             `/cases/${session.id}/speech`,
             { method: "POST", body: form },
@@ -139,294 +164,96 @@ export default function Chat({
       setError((e as Error).message);
     }
   }
+
+  const p = caseData.profile;
+  const where = lang === "ta" ? districtTamil[p.district] || p.district : p.district;
+  const situation = p.situation ? SITUATION[p.situation] : null;
+  const greeting = pick(
+    lang,
+    `Vanakkam! I'm Uzhav.ai. I can see your paddy is in ${where}${situation ? " " + situation[0] : ""}. What would you like help with?`,
+    `வணக்கம்! நான் உழவ்.ai. உங்கள் நெல் வயல் ${where}-இல் உள்ளது${situation ? ", " + situation[1] : ""}. எதில் உதவ வேண்டும்?`,
+  );
+
   return (
-    <div className="chat-layout">
-      <div className="chat-main">
-        <div className="page-heading">
-          <div className="eyebrow">
-            {pick(lang, "YOUR PERSONAL GUIDE", "உங்கள் வழிகாட்டி")}
-          </div>
-          <h1>
-            {pick(
-              lang,
-              "One question. A clearer next step.",
-              "ஒரு கேள்வி. தெளிவான அடுத்த படி.",
-            )}
-          </h1>
-          <p>
-            {pick(
-              lang,
-              "Ask in English or Tamil. Every generated explanation comes with the passages behind it.",
-              "ஆங்கிலம் அல்லது தமிழில் கேளுங்கள். உருவாக்கப்பட்ட விளக்கத்திற்கான ஆதாரங்களும் வழங்கப்படும்.",
-            )}
-          </p>
+    <div className="chat-simple">
+      <div className="chat-thread" aria-live="polite">
+        <div className="bubble bot">
+          <span className="bot-mark"><Leaf size={16} /></span>
+          <div className="bubble-body"><p className="answer-copy">{greeting}</p></div>
         </div>
-        <div className="context-strip">
-          <span>
-            <Leaf size={15} />
-            {caseData.profile.district}
-          </span>
-          <span>{pick(lang, "Paddy", "நெல்")}</span>
-          <span>
-            {stageNames[caseData.profile.stage][lang === "ta" ? 1 : 0]}
-          </span>
-        </div>
-        {!caseData.messages.length && (
-          <div className="welcome">
-            <div className="assistant-mark">
-              <Leaf />
-            </div>
-            <h2>
-              {pick(
-                lang,
-                "Where would you like to start?",
-                "எங்கிருந்து தொடங்க விரும்புகிறீர்கள்?",
-              )}
-            </h2>
-            <p>
-              {pick(
-                lang,
-                "Describe the step you are stuck on. Keep identity and bank numbers out of the conversation.",
-                "நீங்கள் சிரமப்படும் படியை விவரிக்கவும். அடையாள மற்றும் வங்கிக் கணக்கு எண்களைப் பகிர வேண்டாம்.",
-              )}
-            </p>
-            <div className="suggestions">
-              {examples.map((q) => (
-                <button key={q} onClick={() => setQuestion(q)}>
-                  {q}
-                  <ArrowUpRight size={17} />
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        <div className="messages" aria-live="polite">
-          {caseData.messages.map((m) => (
-            <article key={m.id} className="exchange">
-              <div className="question">
-                <UserRound size={18} />
-                <p>{m.question}</p>
-              </div>
-              <div className="answer">
-                <div className="answer-heading">
-                  <Leaf size={20} />
-                  <strong>
-                    {pick(
-                      lang,
-                      "Crop Insurance Assistant",
-                      "பயிர்க் காப்பீட்டு உதவியாளர்",
-                    )}
-                  </strong>
-                  <span className={"status " + m.result.status}>
-                    {m.result.status === "answered"
-                      ? pick(
-                          lang,
-                          "Sources checked",
-                          "ஆதாரங்கள் சரிபார்க்கப்பட்டன",
-                        )
-                      : m.result.status === "needs_review"
-                        ? pick(
-                            lang,
-                            "Human review requested",
-                            "மனித மதிப்பாய்வு கோரப்பட்டது",
-                          )
-                        : pick(
-                            lang,
-                            "No AI answer issued",
-                            "AI பதில் வழங்கப்படவில்லை",
-                          )}
+        {caseData.messages.map((m) => (
+          <div key={m.id} className="turn">
+            <div className="bubble user"><p>{m.question}</p></div>
+            <div className="bubble bot">
+              <span className="bot-mark"><Leaf size={16} /></span>
+              <div className="bubble-body">
+                {m.result.status === "needs_review" && (
+                  <span className="status needs_review">
+                    {pick(lang, "Sent to a person for review", "மனித மதிப்பாய்வுக்கு அனுப்பப்பட்டது")}
                   </span>
-                </div>
-                {m.result.claims.length ? (
-                  m.result.claims.map((c, i) => (
-                    <p className="answer-copy" key={i}>
-                      {c.text}{" "}
-                      <Citations
-                        ids={c.citation_ids}
-                        items={m.result.evidence}
-                      />
-                    </p>
-                  ))
-                ) : (
-                  <p className="answer-copy">{m.result.answer}</p>
                 )}
-                {m.result.redacted && (
-                  <small>
-                    {pick(
-                      lang,
-                      "Possible personal identifiers were removed.",
-                      "தனிப்பட்ட அடையாள விவரங்கள் நீக்கப்பட்டன.",
-                    )}
-                  </small>
-                )}
-                {!!m.result.actions.length && (
-                  <div className="next-actions">
-                    <strong>
-                      {pick(
-                        lang,
-                        "Suggested next steps",
-                        "பரிந்துரைக்கப்பட்ட அடுத்த படிகள்",
-                      )}
-                    </strong>
-                    {m.result.actions.map((a, i) => (
-                      <p key={i}>
-                        <CheckCircle2 size={17} />
-                        <span>
-                          {a.text}{" "}
-                          <Citations
-                            ids={a.citation_ids}
-                            items={m.result.evidence}
-                          />
-                        </span>
-                      </p>
-                    ))}
-                  </div>
-                )}
-                {!!m.result.missing_information.length && (
-                  <p>{m.result.missing_information.join(" · ")}</p>
-                )}
-                {m.result.claims.some((c) => c.original_text) && (
-                  <details>
-                    <summary>
-                      {pick(
-                        lang,
-                        "Original English answer",
-                        "மூல ஆங்கிலப் பதில்",
-                      )}
-                    </summary>
-                    {m.result.claims.map((c, i) => (
-                      <p key={i}>{c.original_text}</p>
-                    ))}
-                  </details>
-                )}
-                {!!m.result.evidence.length && (
-                  <Evidence items={m.result.evidence} lang={lang} />
-                )}
-                <details className="trace">
-                  <summary>
-                    {pick(
-                      lang,
-                      "How this response was produced",
-                      "இந்தப் பதில் உருவான விதம்",
-                    )}
-                  </summary>
-                  <ol>
-                    {m.result.trace.map((t, i) => (
-                      <li key={i}>{t}</li>
-                    ))}
-                  </ol>
-                  <small>
-                    {m.result.engine} · {m.result.elapsed_ms} ms
-                  </small>
-                  <p>
-                    {pick(
-                      lang,
-                      "Retrieval scores and model checks are safeguards, not a guarantee of correctness.",
-                      "தேடல் மதிப்பெண்களும் மாதிரிச் சரிபார்ப்புகளும் சரியான பதிலுக்கான உத்தரவாதம் அல்ல.",
-                    )}
-                  </p>
-                </details>
+                <AnswerBody result={shown(m)} lang={lang} />
               </div>
-            </article>
-          ))}
-        </div>
+            </div>
+          </div>
+        ))}
+        {pending && (
+          <div className="bubble user"><p>{pending}</p></div>
+        )}
         {busy && (
-          <div className="working" role="status">
-            <LoaderCircle className="spin" size={20} />
-            {pick(
-              lang,
-              "Checking documents and preparing your response…",
-              "ஆவணங்கள் சரிபார்க்கப்படுகின்றன…",
-            )}
+          <div className="bubble bot thinking" role="status">
+            <span className="bot-mark"><Leaf size={16} /></span>
+            <div className="bubble-body">
+              <LoaderCircle className="spin" size={18} />
+              {pick(lang, "Thinking…", "யோசிக்கிறது…")}
+            </div>
           </div>
         )}
-        {error && (
-          <div role="alert" className="error">
-            {error}
-          </div>
-        )}
-        <form
-          className="composer"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void send();
-          }}
-        >
-          <textarea
-            aria-label={pick(lang, "Your question", "உங்கள் கேள்வி")}
-            value={question}
-            maxLength={1600}
-            onChange={(e) => setQuestion(e.target.value)}
-            placeholder={pick(
-              lang,
-              "Ask about your crop-insurance journey…",
-              "பயிர்க் காப்பீடு பற்றிய உங்கள் கேள்வி…",
-            )}
-          />
-          <div className="composer-bottom">
-            <span>{question.length}/1600</span>
-            <button
-              type="button"
-              className={"icon-button " + (recording ? "recording" : "")}
-              aria-label={recording ? "Stop recording" : "Record a question"}
-              onClick={() => void voice()}
-              disabled={busy}
-            >
-              {recording ? <Square size={18} /> : <Mic size={19} />}
-            </button>
-            <button
-              className="primary"
-              disabled={
-                busy || recording || !consent || question.trim().length < 3
-              }
-            >
-              <Send size={17} />
-              {pick(lang, "Ask assistant", "கேள்வி கேட்கவும்")}
-            </button>
-          </div>
-        </form>
-        <label className="consent">
-          <input
-            type="checkbox"
-            checked={consent}
-            onChange={(e) => setConsent(e.target.checked)}
-          />
-          {pick(
-            lang,
-            "I agree to send my question and case context to AI Credits and, for Tamil or voice, Sarvam. Use sample information for this prototype.",
-            "என் கேள்வி மற்றும் வழக்கு விவரங்களை AI Credits-க்கும், தமிழ் அல்லது குரலுக்கு Sarvam-க்கும் அனுப்ப ஒப்புக்கொள்கிறேன். இந்த மாதிரியில் மாதிரி விவரங்களை மட்டும் பயன்படுத்தவும்.",
-          )}
-        </label>
+        <div ref={bottom} />
       </div>
-      <aside className="chat-aside">
-        <ShieldCheck size={25} />
-        <h3>
-          {pick(
-            lang,
-            "Guidance you can inspect",
-            "நீங்களே சரிபார்க்கும் வழிகாட்டுதல்",
-          )}
-        </h3>
-        <p>
-          {pick(
-            lang,
-            "Official documents stay visible alongside the answer. Questions without sufficient evidence go to human review.",
-            "பதிலுடன் அரசு ஆவணங்களும் காண்பிக்கப்படும். போதுமான ஆதாரமில்லாத கேள்விகள் மனித மதிப்பாய்வுக்குச் செல்லும்.",
-          )}
-        </p>
-        <hr />
-        <small>{pick(lang, "IMPORTANT", "முக்கியம்")}</small>
-        <p>
-          {pick(
-            lang,
-            "The assistant does not decide eligibility, submit claims or retrieve live insurer status.",
-            "உதவியாளர் தகுதியை முடிவு செய்யாது, கோரிக்கைகளைச் சமர்ப்பிக்காது, காப்பீட்டு நிறுவனத்தின் நேரடி நிலையைப் பெறாது.",
-          )}
-        </p>
-        <span className="pill">
-          {pick(lang, "Demo Day prototype", "செயல்விளக்க மாதிரி")}
-        </span>
-      </aside>
+
+      {error && <div role="alert" className="error">{error}</div>}
+
+      <form
+        className="composer chat-composer"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void send();
+        }}
+      >
+        <textarea
+          aria-label={pick(lang, "Your message", "உங்கள் செய்தி")}
+          value={question}
+          maxLength={1600}
+          rows={2}
+          onChange={(e) => setQuestion(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              void send();
+            }
+          }}
+          placeholder={hintFor(caseData, lang)}
+        />
+        <div className="composer-bottom">
+          <button
+            type="button"
+            className={"icon-button " + (recording ? "recording" : "")}
+            aria-label={recording ? "Stop recording" : "Record a question"}
+            onClick={() => void voice()}
+            disabled={busy}
+          >
+            {recording ? <Square size={18} /> : <Mic size={19} />}
+          </button>
+          <button
+            className="primary"
+            aria-label={pick(lang, "Send", "அனுப்பு")}
+            disabled={busy || recording || question.trim().length < 3}
+          >
+            <Send size={17} />
+          </button>
+        </div>
+      </form>
     </div>
   );
 }

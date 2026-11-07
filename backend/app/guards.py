@@ -49,23 +49,32 @@ def normalize(text):
     return re.sub(r"[\W_]+", " ", text).strip().lower()
 
 
+def claim_ok(claim, by_id):
+    """One claim/action: real citations, verbatim quotes, no invented numbers, no promises."""
+    if decision_claim(claim.text):
+        return False
+    if any(i not in by_id for i in claim.citation_ids):
+        return False
+    material = " ".join(by_id[i]["text"] for i in claim.citation_ids)
+    if any(
+        len(q.strip()) < 12 or normalize(q) not in normalize(material)
+        for q in claim.quotes
+    ):
+        return False
+    # Prevent invented amounts, durations and dates even when a citation exists.
+    return not (set(re.findall(r"\d+", claim.text)) - set(re.findall(r"\d+", material)))
+
+
 def validate_claims(answer, evidence):
     by_id = {x["id"]: x for x in evidence}
-    claims = answer.claims + answer.actions
     if answer.status != "answered" or not answer.claims:
         return False
-    for claim in claims:
-        if decision_claim(claim.text):
-            return False
-        if any(i not in by_id for i in claim.citation_ids):
-            return False
-        material = " ".join(by_id[i]["text"] for i in claim.citation_ids)
-        if any(
-            len(q.strip()) < 12 or normalize(q) not in normalize(material)
-            for q in claim.quotes
-        ):
-            return False
-        # Prevent invented amounts, durations and dates even when a citation exists.
-        if set(re.findall(r"\d+", claim.text)) - set(re.findall(r"\d+", material)):
-            return False
-    return True
+    return all(claim_ok(c, by_id) for c in answer.claims + answer.actions)
+
+
+def keep_valid(answer, evidence):
+    """Drop only the claims/actions that fail checks. True if at least one claim survives."""
+    by_id = {x["id"]: x for x in evidence}
+    answer.claims = [c for c in answer.claims if claim_ok(c, by_id)]
+    answer.actions = [a for a in answer.actions if claim_ok(a, by_id)]
+    return answer.status == "answered" and bool(answer.claims)

@@ -257,16 +257,17 @@ def test_case_isolation_and_scope_lock(client):
     )
 
 
-def test_consent_and_reviewer_access(client):
+def test_chat_needs_no_consent_and_reviewer_access(client, monkeypatch):
+    from app import chat
+
+    async def complete(system, user):
+        return {"reply": "Hello! How can I help with your crop?", "sources": []}
+
+    monkeypatch.setattr(chat, "completion", complete)
+    monkeypatch.setattr(chat, "configured", lambda _: True)
     cid, h = new(client)
-    assert (
-        client.post(
-            f"/api/cases/{cid}/chat",
-            headers=h,
-            json={"question": "crop insurance", "consent": False},
-        ).status_code
-        == 400
-    )
+    r = client.post(f"/api/cases/{cid}/chat", headers=h, json={"question": "crop insurance"})
+    assert r.status_code == 200 and r.json()["status"] == "answered"
     assert client.get("/api/reviews").status_code == 401
     assert (
         client.get(
@@ -378,3 +379,96 @@ def test_oversized_request_rejected(client):
         ).status_code
         == 413
     )
+
+
+def test_intake_plan_flow(client, monkeypatch):
+    from app import main, intake
+    from app.guards import needs_notification
+
+    seen = {}
+
+    async def fake_run(question, language, profile, history, retriever):
+        seen.update(question=question, profile=profile)
+        return {"status": "answered", "reason": "grounded", "answer": "ok",
+                "claims": [], "actions": [], "evidence": [], "missing_information": [],
+                "language": language, "engine": "stub", "trace": [], "redacted": False}
+
+    monkeypatch.setattr(main.pipeline, "run", fake_run)
+    answers = {**PROFILE, "situation": "damaged", "loanee": "no",
+               "damage_cause": "flood", "damage_when": "under_3_days"}
+    d = client.post("/api/cases", json=answers).json()
+    auth = {"Authorization": "Bearer " + d["token"]}
+    assert d["profile"]["stage"] == "reporting"
+    r = client.post(f"/api/cases/{d['id']}/plan", json={}, headers=auth)
+    assert r.status_code == 200
+    assert "flooding" in seen["question"] and seen["profile"]["loanee"] == "no"
+    snap = client.get(f"/api/cases/{d['id']}", headers=auth).json()
+    assert snap["messages"] == [] and snap["plan"]["result"]["status"] == "answered"
+    assert "flooding" in snap["plan"]["question"]
+    # Plain cases without intake answers cannot request a plan.
+    cid, h = new(client)
+    assert client.post(f"/api/cases/{cid}/plan", json={}, headers=h).status_code == 400
+    # Generated questions must never trip the notification guard.
+    for s in intake.STAGE_FOR:
+        for w in ["under_3_days", "harvested"]:
+            assert not needs_notification(intake.plan_question({**answers, "situation": s, "damage_when": w}))
+
+
+def test_suggested_reply_passes_through(monkeypatch):
+    async def complete(system, user):
+        return {**valid(), "suggested_reply": "  I have my land record,   what next?  "}
+
+    monkeypatch.setattr(pipeline, "configured", lambda _: True)
+    monkeypatch.setattr(pipeline, "completion", complete)
+    monkeypatch.setenv("VERIFY_ANSWERS", "false")
+    assert run()["suggested_reply"] == "I have my land record, what next?"
+
+
+def test_reply_without_suggestion_still_valid(monkeypatch):
+    async def complete(system, user):
+        return valid()
+
+    monkeypatch.setattr(pipeline, "configured", lambda _: True)
+    monkeypatch.setattr(pipeline, "completion", complete)
+    monkeypatch.setenv("VERIFY_ANSWERS", "false")
+    r = run()
+    assert r["status"] == "answered" and r["suggested_reply"] == ""
+
+
+def test_plan_keeps_valid_points_and_drops_bad_ones(monkeypatch):
+    async def complete(system, user):
+        g = valid()
+        bad = {**g["claims"][0], "quotes": ["this sentence is not in the source text"]}
+        return {**g, "claims": g["claims"] + [bad]}
+
+    monkeypatch.setattr(pipeline, "configured", lambda _: True)
+    monkeypatch.setattr(pipeline, "completion", complete)
+    monkeypatch.setenv("VERIFY_ANSWERS", "false")
+    r = run()
+    assert r["status"] == "answered" and len(r["claims"]) == len(valid()["claims"])
+
+
+def test_reply_translation_is_cached(client, monkeypatch):
+    from app import main, chat
+
+    async def complete(system, user):
+        return {"reply": "Report it within 72 hours.", "sources": []}
+
+    calls = []
+
+    async def fake_translate(text, source, target):
+        calls.append(target)
+        return "72 மணி நேரத்திற்குள் பதிவு செய்யுங்கள்."
+
+    monkeypatch.setattr(chat, "completion", complete)
+    monkeypatch.setattr(chat, "configured", lambda _: True)
+    monkeypatch.setattr(main, "translate", fake_translate)
+    # Allow "72" in the reply for this stub (no evidence corpus needed).
+    monkeypatch.setattr(chat, "_check", lambda reply, sources, by_id, allowed: ("", []))
+    cid, h = new(client)
+    mid = client.post(f"/api/cases/{cid}/chat", headers=h, json={"question": "how to report loss"}).json()["id"]
+    url = f"/api/cases/{cid}/messages/{mid}/translate"
+    assert client.post(url, headers=h, json={"language": "ta"}).json()["answer"].startswith("72")
+    assert client.post(url, headers=h, json={"language": "ta"}).status_code == 200
+    assert calls == ["ta-IN"]  # second request served from cache
+    assert client.post(url, headers=h, json={"language": "en"}).json()["answer"] == "Report it within 72 hours."

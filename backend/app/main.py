@@ -1,14 +1,15 @@
-import asyncio, json, secrets, time
+import asyncio, json, re, secrets, time
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Header, UploadFile, File, Form, Request
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from . import store, guards, pipeline
+from . import store, guards, pipeline, intake, chat as conversation
+from .checklist import make_checklist
 from .config import ROOT, DATA, DISTRICTS, STAGES, configured, setting
-from .schemas import CaseInput, ChatInput, ReviewInput, EventInput
+from .schemas import CaseInput, ChatInput, PlanInput, ReviewInput, EventInput, TranslateInput
 from .retrieval import Retriever
-from .providers import transcribe, ProviderError
+from .providers import transcribe, translate, ProviderError
 
 retriever = Retriever()
 semaphore = asyncio.Semaphore(3)
@@ -21,7 +22,7 @@ async def lifespan(app):
     yield
 
 
-app = FastAPI(title="Crop Insurance Assistant", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Uzhav.ai", version="1.0.0", lifespan=lifespan)
 
 
 def rate(key, limit=15):
@@ -114,7 +115,10 @@ def sources():
 @app.post("/api/cases")
 def create_case(data: CaseInput, request: Request):
     rate("create:" + request.client.host, 8)
-    cid, token = store.create(data.model_dump())
+    profile = data.model_dump()
+    if profile.get("situation"):
+        profile["stage"] = intake.STAGE_FOR[profile["situation"]]
+    cid, token = store.create(profile)
     return {"id": cid, "token": token, **case_snapshot(cid)}
 
 
@@ -142,7 +146,7 @@ def update_case(cid: str, data: CaseInput, authorization: str = Header(default="
 def delete_case(cid: str, authorization: str = Header(default="")):
     case_auth(cid, authorization)
     with store.connect() as db:
-        for table in ("messages", "reviews", "events"):
+        for table in ("messages", "reviews", "events", "plans"):
             db.execute(f"DELETE FROM {table} WHERE case_id=?", (cid,))
         db.execute("DELETE FROM cases WHERE id=?", (cid,))
     return {"deleted": True}
@@ -152,21 +156,72 @@ def delete_case(cid: str, authorization: str = Header(default="")):
 async def chat(cid: str, data: ChatInput, authorization: str = Header(default="")):
     profile = case_auth(cid, authorization)
     rate(cid)
-    if not data.consent:
-        raise HTTPException(
-            400, "Consent is required before sending questions to AI providers."
-        )
     history = store.snapshot(cid)["messages"]
     async with semaphore:
         try:
             result = await asyncio.wait_for(
-                pipeline.run(data.question, data.language, profile, history, retriever),
+                conversation.converse(
+                    data.question, data.language, profile, history, retriever,
+                    plan_steps=((store.snapshot(cid).get("plan") or {}).get("result") or {}).get("checklist", []),
+                ),
                 timeout=180,
             )
         except asyncio.TimeoutError:
             raise HTTPException(504, "Response timed out. Please retry.")
     mid = store.save_message(cid, guards.redact(data.question), result)
     return {"id": mid, **result}
+
+
+@app.post("/api/cases/{cid}/plan")
+async def plan(cid: str, data: PlanInput, authorization: str = Header(default="")):
+    """First answer after guided intake: a cited plan built from the farmer's answers."""
+    profile = case_auth(cid, authorization)
+    rate(cid)
+    if not profile.get("situation"):
+        raise HTTPException(400, "Complete the intake questions first.")
+    question = intake.plan_question(profile)
+    async with semaphore:
+        try:
+            result = await asyncio.wait_for(
+                pipeline.run(question, data.language, profile, [], retriever),
+                timeout=180,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(504, "Response timed out. Please retry.")
+    result["checklist"] = await make_checklist(result, data.language)
+    store.save_plan(cid, question, result)
+    return result
+
+
+@app.post("/api/cases/{cid}/messages/{mid}/translate")
+async def translate_message(
+    cid: str, mid: str, data: TranslateInput, authorization: str = Header(default="")
+):
+    """Show an earlier reply in the other language. Each translation is cached on the message."""
+    case_auth(cid, authorization)
+    m = store.get_message(cid, mid)
+    if not m:
+        raise HTTPException(404, "Message not found")
+    r = m["result"]
+    english = r.get("english_answer") or (r.get("answer") if r.get("language") == "en" else "")
+    if data.language == "en":
+        if not english:
+            raise HTTPException(409, "No English version stored for this reply")
+        return {"answer": english}
+    if r.get("language") == "ta":
+        return {"answer": r["answer"]}
+    if r.get("answer_ta"):
+        return {"answer": r["answer_ta"]}
+    rate("translate:" + cid, 30)
+    try:
+        text = await translate(english, "en-IN", "ta-IN")
+    except ProviderError as exc:
+        raise HTTPException(503, str(exc))
+    if set(re.findall(r"\d+", text)) != set(re.findall(r"\d+", english)):
+        raise HTTPException(502, "Translation changed a number; showing the original")
+    r["answer_ta"] = text
+    store.update_message_result(mid, r)
+    return {"answer": text}
 
 
 @app.post("/api/cases/{cid}/events")
@@ -204,13 +259,10 @@ def draft(cid: str, authorization: str = Header(default="")):
 async def speech(
     cid: str,
     file: UploadFile = File(...),
-    consent: bool = Form(False),
     authorization: str = Header(default=""),
 ):
     case_auth(cid, authorization)
     rate("speech:" + cid, 6)
-    if not consent:
-        raise HTTPException(400, "Consent required for sending audio to Sarvam.")
     if file.content_type not in ("audio/webm", "audio/wav", "audio/ogg", "audio/mp4"):
         raise HTTPException(415, "Unsupported audio type")
     content = await file.read(5_000_001)
